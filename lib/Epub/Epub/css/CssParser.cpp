@@ -9,8 +9,10 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <string_view>
+#include <type_traits>
 
 namespace {
 
@@ -94,8 +96,28 @@ bool tryParseNumber(std::string_view s, T& out) {
   const char* begin = s.data();
   const char* end = s.data() + s.size();
   if (begin < end && *begin == '+') ++begin;
+#ifdef SIMULATOR
+  // Apple Clang's libc++ (Xcode 15.x) lacks std::from_chars for floating-point
+  // types, so the desktop simulator cannot compile the float path. The ESP32 GCC
+  // toolchain supports it, so this shim is scoped to the simulator only and
+  // leaves firmware behavior untouched. The caller has already stripped any CSS
+  // unit, so [begin, end) is a bare numeric token; strtof mirrors the from_chars
+  // contract (trailing suffix -> parsedEnd != end -> failure). The from_chars
+  // call lives in the discarded else-branch so it is never instantiated for T=float.
+  if constexpr (std::is_floating_point_v<T>) {
+    char* parsedEnd = nullptr;
+    const float value = std::strtof(begin, &parsedEnd);
+    if (parsedEnd != end) return false;
+    out = static_cast<T>(value);
+    return true;
+  } else {
+    const auto r = std::from_chars(begin, end, out);
+    return r.ec == std::errc{} && r.ptr == end;
+  }
+#else
   const auto r = std::from_chars(begin, end, out);
   return r.ec == std::errc{} && r.ptr == end;
+#endif
 }
 
 // Collect up to 4 whitespace-separated tokens for a CSS edge-value shorthand

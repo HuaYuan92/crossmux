@@ -12,7 +12,7 @@
 #include "components/FontPreloadView.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "images/Logo120.h"
+#include "images/BootArt.h"
 
 void BootActivity::onEnter() {
   Activity::onEnter();
@@ -30,10 +30,39 @@ void BootActivity::renderSplash() {
   const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
-  renderer.drawImage(Logo120, (pageWidth - 120) / 2, (pageHeight - 120) / 2, 120, 120);
-  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 70, tr(STR_CROSSPOINT), true, EpdFontFamily::BOLD);
-  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 95, tr(STR_BOOTING));
-  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight - 30, CROSSPOINT_VERSION);
+
+  // Full-screen ink-wash boot art. drawPixel() takes logical, orientation-aware
+  // coordinates, so the upright BOOTART bitmap fills the portrait panel; it is
+  // centered when a device's logical size differs from the art's native size.
+  const int artX = (pageWidth - BOOTART_WIDTH) / 2;
+  const int artY = (pageHeight - BOOTART_HEIGHT) / 2;
+  constexpr int artRowBytes = (BOOTART_WIDTH + 7) / 8;
+  for (int ay = 0; ay < BOOTART_HEIGHT; ++ay) {
+    const int sy = artY + ay;
+    if (sy < 0 || sy >= pageHeight) continue;
+    const uint8_t* src = BootArt + ay * artRowBytes;
+    for (int ax = 0; ax < BOOTART_WIDTH; ++ax) {
+      const int sx = artX + ax;
+      if (sx < 0 || sx >= pageWidth) continue;
+      const bool black = (src[ax >> 3] >> (7 - (ax & 7))) & 0x1;
+      renderer.drawPixel(sx, sy, black);
+    }
+  }
+
+  // Centered welcome text on a white plate so it stays legible over the art.
+  const char* welcome = tr(STR_BOOT_WELCOME_SUBTITLE);
+  const int titleY = pageHeight / 2;
+  const int titleH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int titleW = renderer.getTextWidth(UI_10_FONT_ID, welcome, EpdFontFamily::BOLD);
+  renderer.fillRect((pageWidth - titleW) / 2 - 8, titleY - 4, titleW + 16, titleH + 8, /*state=*/false);
+  renderer.drawCenteredText(UI_10_FONT_ID, titleY, welcome, true, EpdFontFamily::BOLD);
+
+  // Firmware version at the bottom, also on a small white plate.
+  const int verY = pageHeight - 30;
+  const int verH = renderer.getLineHeight(SMALL_FONT_ID);
+  const int verW = renderer.getTextWidth(SMALL_FONT_ID, CROSSPOINT_VERSION);
+  renderer.fillRect((pageWidth - verW) / 2 - 6, verY - 2, verW + 12, verH + 4, /*state=*/false);
+  renderer.drawCenteredText(SMALL_FONT_ID, verY, CROSSPOINT_VERSION);
 #if FREEINK_DEVICE_EEGO_A4
   // A4: the panel is being powered on for the first time here, and a FAST
   // refresh on a freshly powered panel doesn't establish the frame (observed:
