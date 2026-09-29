@@ -16,7 +16,9 @@
 #include "util/TimeUtils.h"
 
 #if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+#include <ArduinoJson.h>
 #include <HalTempHumidity.h>
+#include <PersistableStore.h>
 #endif
 
 // CN font-coverage rule (drives every fontId choice in this file):
@@ -65,6 +67,7 @@ constexpr float kBoxTopYRatio = 0.710f;
 
 constexpr int kLunarOffsetBelowDivider = 10;
 constexpr int kZodiacOffsetBelowDivider = 64;
+constexpr int kUpdatedOffsetBelowDivider = 88;  // "更新于 …" line, below the zodiac
 constexpr int kDividerStrokeWidth = 3;
 constexpr int kDividerInsetRatio = 12;
 constexpr int kBoxHeight = 130;
@@ -305,6 +308,35 @@ bool getTodayLocal(struct tm& out) {
   return now && TimeUtils::getLocalDateTime(now, out);
 }
 
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+// Versioned so a future layout change invalidates old caches instead of
+// silently mis-parsing them. The almanac is recomputed from the stored date, so
+// we only persist "which day was today" plus when it was captured.
+constexpr int kAlmanacCacheVersion = 1;
+constexpr const char* kAlmanacCachePath = "/.crosspoint/almanac.json";
+
+bool loadAlmanacCache(int& year, int& month, int& day, int64_t& epoch) {
+  JsonDocument doc;
+  if (!PersistableStoreBase::readDocFromFile(kAlmanacCachePath, doc)) return false;
+  if ((doc["v"] | 0) != kAlmanacCacheVersion) return false;
+  year = doc["y"] | 0;
+  month = doc["m"] | 0;
+  day = doc["d"] | 0;
+  epoch = doc["epoch"] | static_cast<int64_t>(0);
+  return year >= 1900 && year <= 2100 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+bool saveAlmanacCache(int year, int month, int day, int64_t epoch) {
+  JsonDocument doc;
+  doc["v"] = kAlmanacCacheVersion;
+  doc["y"] = year;
+  doc["m"] = month;
+  doc["d"] = day;
+  doc["epoch"] = epoch;
+  return PersistableStoreBase::writeDocToFile(kAlmanacCachePath, doc);
+}
+#endif  // FREEINK_DEVICE_WAVESHARE_EPAPER_397
+
 }  // namespace
 
 void ChineseCalendarFace::onEnter() {
@@ -343,6 +375,25 @@ bool ChineseCalendarFace::refreshCachedDay() {
   struct tm today;
   if (!getTodayLocal(today)) {
     LOG_DBG("STANDBY", "Calendar: trustworthy local date unavailable");
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+    // Clock unavailable (offline before the first SNTP sync): fall back to the
+    // cached "today" so the page shows the previous almanac instead of blank.
+    // The cache base is loaded by render(); navigation still works off it.
+    if (cacheBaseValid_) {
+      struct tm base{};
+      base.tm_year = cacheBaseYear_ - 1900;
+      base.tm_mon = cacheBaseMonth_ - 1;
+      base.tm_mday = cacheBaseDay_;
+      base.tm_isdst = -1;
+      struct tm cachedTarget;
+      if (offsetDay(base, dayOffset_, cachedTarget) && computeAlmanac(cachedTarget, cachedDay_)) {
+        cachedBaseDayKey_ = -1;  // clock invalid: don't track midnight crossover
+        cacheValid_ = true;
+        usingCache_ = true;
+        return true;
+      }
+    }
+#endif
     cacheValid_ = false;
     return false;
   }
@@ -359,6 +410,12 @@ bool ChineseCalendarFace::refreshCachedDay() {
     return false;
   }
   cacheValid_ = true;
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  usingCache_ = false;
+  // Persist "today" (offset 0 only) so a later offline boot can fall back. The
+  // actual SD write is flushed in render(), which holds the RenderLock.
+  if (dayOffset_ == 0) cacheWritePending_ = true;
+#endif
   return true;
 }
 
@@ -433,6 +490,35 @@ uint32_t ChineseCalendarFace::secondsUntilNextWake() const {
 
 void ChineseCalendarFace::render(GfxRenderer& renderer, const Rect& viewport) {
   if (!heroStyle_ || !heroSeeds_) return;
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // All SD I/O lives here: render() runs under the activity's RenderLock (the
+  // e-ink panel shares the SPI bus with the card). render() is also invoked for
+  // the grayscale LSB/MSB passes, so these one-shot flags keep bus traffic to a
+  // single read and a single write per update.
+  if (cacheWritePending_) {
+    const uint32_t nowEpoch = TimeUtils::getCurrentValidTimestamp();
+    if (nowEpoch != 0) {
+      saveAlmanacCache(cachedDay_.gregYear, cachedDay_.gregMonth, cachedDay_.gregDay,
+                       static_cast<int64_t>(nowEpoch));
+    }
+    cacheWritePending_ = false;
+  }
+  if (!cacheValid_ && !cacheLoaded_) {
+    cacheLoaded_ = true;
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int64_t epoch = 0;
+    if (loadAlmanacCache(year, month, day, epoch)) {
+      cacheBaseYear_ = year;
+      cacheBaseMonth_ = month;
+      cacheBaseDay_ = day;
+      cacheBaseValid_ = true;
+      shownEpoch_ = epoch;
+      refreshCachedDay();  // now falls back to the cached base date
+    }
+  }
+#endif
   if (!cacheValid_) {
     // Compute lazily if onEnter's first attempt failed (e.g. localtime not
     // yet ready). Best-effort: if it still fails, leave the page blank.
@@ -440,6 +526,17 @@ void ChineseCalendarFace::render(GfxRenderer& renderer, const Rect& viewport) {
   }
   drawAlmanacPage(renderer, viewport, cachedDay_, *heroStyle_, *heroSeeds_);
 #if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // Flag the offline fallback so the user knows this is the last cached day.
+  if (usingCache_ && shownEpoch_ != 0) {
+    std::tm upTm{};
+    if (TimeUtils::getLocalDateTime(static_cast<uint32_t>(shownEpoch_), upTm)) {
+      const int dividerY = viewport.y + static_cast<int>(viewport.height * kDividerYRatio);
+      char up[40];
+      std::snprintf(up, sizeof(up), "%s %02d-%02d %02d:%02d", tr(STR_UPDATED_AT), upTm.tm_mon + 1, upTm.tm_mday,
+                    upTm.tm_hour, upTm.tm_min);
+      renderer.drawCenteredText(SMALL_FONT_ID, dividerY + kUpdatedOffsetBelowDivider, up);
+    }
+  }
   // Compact ambient reading on the footer's right, mirroring the left 日柱/冲
   // line. Same SMALL font and baseline so it reads as part of the footer.
   if (haveEnv_) {

@@ -58,5 +58,19 @@ class ChineseCalendarFace final : public StandbyFace {
   float tempC_ = 0.0f;
   float humidityPct_ = 0.0f;
   void refreshEnv();
+
+  // Offline fallback: the almanac is a pure function of the Gregorian date, so
+  // we persist the last "today" computed while the clock was valid. On a cold
+  // boot before SNTP the page renders that cached day (flagged "更新于 …")
+  // instead of going blank. All SD I/O is confined to render() (which holds the
+  // activity RenderLock). Waveshare-only: the shared X3/X4 image is unchanged.
+  bool usingCache_ = false;         // displayed day came from the offline cache
+  bool cacheLoaded_ = false;        // cache-read already attempted this session
+  bool cacheWritePending_ = false;  // flush the live "today" to SD in render()
+  int64_t shownEpoch_ = 0;          // "更新于" timestamp of the cached day
+  bool cacheBaseValid_ = false;     // a cached base date has been loaded
+  int cacheBaseYear_ = 0;
+  int cacheBaseMonth_ = 0;
+  int cacheBaseDay_ = 0;
 #endif
 };
