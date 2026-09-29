@@ -27,6 +27,9 @@
 #ifdef ENABLE_CHINESE_VERSION
 #include "ChineseCalendarFace.h"
 #endif
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+#include "WeatherFace.h"
+#endif
 #include "SloppyClockFace.h"
 #include "StandbyTime.h"
 #include "WifiCredentialStore.h"
@@ -57,6 +60,10 @@ constexpr FaceEntry kFaces[] = {
 #ifdef ENABLE_CHINESE_VERSION
     {[]() -> std::unique_ptr<StandbyFace> { return makeUniqueNoThrow<ChineseCalendarFace>(); },
      [](int sw, int sh) { return sh > sw; }},  // portrait only
+#endif
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+    {[]() -> std::unique_ptr<StandbyFace> { return makeUniqueNoThrow<WeatherFace>(); },
+     [](int sw, int sh) { return sh > sw; }},  // portrait only; reads the Weather app's SD cache
 #endif
 };
 constexpr uint8_t kFaceCount = static_cast<uint8_t>(sizeof(kFaces) / sizeof(kFaces[0]));

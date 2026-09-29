@@ -130,6 +130,9 @@ class ActivityManager {
   void goToBuddy();
   void goToStandby();
   void goToGame2048();
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  void goToWeather();
+#endif
 #ifdef ENABLE_CHINESE_VERSION
   void goToChineseChess();
 #endif

@@ -33,6 +33,9 @@
 #include "apps/standby/StandbyActivity.h"
 #include "apps/sudoku/SudokuMenuActivity.h"
 #include "apps/woodfish/WoodfishActivity.h"
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+#include "apps/weather/WeatherActivity.h"
+#endif
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
@@ -520,6 +523,10 @@ void ActivityManager::goToAirPage() { replaceActivityWith<AirPageActivity>(); }
 void ActivityManager::goToBuddy() { replaceActivityWith<BuddyActivity>(); }
 
 void ActivityManager::goToStandby() { replaceActivityWith<StandbyActivity>(); }
+
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+void ActivityManager::goToWeather() { replaceActivityWith<WeatherActivity>(); }
+#endif
 
 #ifdef ENABLE_CHINESE_VERSION
 void ActivityManager::goToChineseChess() { replaceActivityWith<ChineseChessMenuActivity>(); }

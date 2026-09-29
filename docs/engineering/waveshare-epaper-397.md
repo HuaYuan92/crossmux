@@ -34,7 +34,8 @@ on; the boot gesture is ignored until its first release, so it may remain held
 until the first screen is visible. A new runtime hold uses the existing 400 ms
 software shutdown threshold (about 10 ms when short Power is set to Sleep),
 while a continuous 4-second hold remains the PMIC hard-power-off fallback.
-QMI8658 and SHTC3 are deliberately not initialized by this target.
+QMI8658 is deliberately not initialized by this target. The on-board SHTC3
+(`0x70`) is read only by the standby calendar face; see **On-board sensors**.
 
 System Settings exposes **Sound Feedback** with Off/Low/Medium/High levels;
 Medium is the default on this target. Low/Medium map to the previous Medium/High
@@ -79,6 +80,49 @@ pages use only the selector path and do not run a four-gray `0xD7`, 500 ms
 settle, or hard-reset sequence. Deep sleep sends `0x10/0x01`; the existing
 AXP2101 shutdown path then removes system power.
 
+## On-board sensors
+
+`HalTempHumidity` drives the SHTC3 (I²C `0x70`, 16-bit commands
+`0x3517` wake / `0x7CA2` measure / `0xB098` sleep, CRC-8 polynomial `0x31`) and
+exposes `begin()`/`read(float& tempC, float& humidityPct)`; other targets get a
+`begin()` that returns false. The standby calendar face reads it once per minute
+and prints temperature and humidity in its footer band. Readings run a few
+degrees above ambient because the sensor sits next to the ESP32-S3 and AXP2101;
+no offset compensation is applied.
+
+## Weather surfaces
+
+`src/util/WeatherService.{h,cpp}` is the single shared model: key-free HTTPS
+lookups (IP geolocation `https://ipwho.is/` then
+`https://api.open-meteo.com/v1/forecast`, current plus four daily entries with
+wind and sunrise/sunset), WMO-code and compass-direction labels through `tr()`,
+and a JSON cache at `/.crosspoint/weather.json` with a fetch timestamp so the
+caller can decide staleness. The struct is fixed-layout, allocation-free, and
+safe to read from a render path; `WeatherService` never touches Wi-Fi itself.
+
+`WeatherActivity` (`src/activities/apps/weather/`, `AppId::Weather`, menu entry,
+`UIIcon::Weather`, and `ActivityManager::goToWeather`) owns the network side:
+associate with the last saved credential, then refresh and write the cache. The
+standby face only renders the cache. All app-registration touchpoints are gated
+by `FREEINK_DEVICE_WAVESHARE_EPAPER_397`; `AppId::Weather = 17` itself is
+ungated because the visibility mask is persisted by bit position.
+
+Both HTTPS calls validate the server certificate against the system clock, and
+the PCF85063A has no backup battery, so `runFetch()` performs
+`TimeUtils::isClockValid() || halClock.syncNow()` before any request (same
+precedent as the WeRead progress sync) and shows `STR_CLOCK_SYNC_FAIL` when that
+fails. A successful sync also writes the time back into the RTC.
+
+## Flashing notes
+
+Flashing runs over the native USB-Serial/JTAG port. A second process holding
+`/dev/cu.usbmodem*` (a leftover serial logger or monitor) makes esptool connect
+and detect the chip, then fail mid-write with `Serial data stream stopped:
+Possible serial noise or corruption` or `Invalid head of packet`; lowering
+`upload_speed` or using `--no-stub` does not help. Check with
+`lsof /dev/cu.usbmodem<id>` before flashing. A partially written app slot still
+boots the previous image and is recovered by a successful reflash.
+
 ## Physical acceptance gate
 
 - Confirm boot without panic/OOM and successful PSRAM, AXP2101, SDMMC, and RTC initialization.
@@ -93,6 +137,10 @@ AXP2101 shutdown path then removes system power.
   cue without blocking input, the amplifier does not pop or stutter, and serial free-heap/largest-block readings do not
   trend downward.
 - Open an EPUB from SD, turn pages, and confirm progress/settings writes survive reboot.
+- Open Apps > Weather on a cold start (RTC time invalid) and after the clock is valid: confirm it reports the city,
+  current conditions, and four forecast days, writes `/.crosspoint/weather.json`, and that a second entry renders from
+  the cache without Wi-Fi. Confirm the sync-failure and no-credential paths show a localized message and leave the
+  previous cache readable.
 - Set the RTC, reboot and fully power-cycle, then confirm restored time.
 - Check battery percentage and charging; unplug USB, run on battery, shut down, then hold the side key until the first
   screen is visible before releasing it. Repeat three times and confirm the boot gesture never triggers shutdown.

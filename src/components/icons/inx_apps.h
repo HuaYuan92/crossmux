@@ -271,6 +271,25 @@ inline constexpr Icon ReadingProfile = readingProfile().data;
 inline constexpr Icon Achievements = achievements().data;
 inline constexpr Icon Calculator = calculator().data;
 
+// Sun behind a cloud: the universal weather glyph, matching the line-art style
+// of the other app thumbnails (zero bits are ink).
+constexpr Bitmap weather() {
+  Bitmap icon;
+  icon.circle(11, 11, 5);     // sun disc (upper-left)
+  icon.line(11, 2, 11, 4);    // top ray
+  icon.line(2, 11, 4, 11);    // left ray
+  icon.line(4, 4, 6, 6);      // top-left diagonal ray
+  icon.line(18, 4, 16, 6);    // top-right diagonal ray
+  icon.line(12, 26, 28, 26);  // cloud base
+  icon.line(12, 26, 12, 22);  // cloud left edge
+  icon.line(28, 26, 28, 22);  // cloud right edge
+  icon.circle(18, 21, 4);     // left bump
+  icon.circle(24, 21, 4);     // right bump
+  return icon;
+}
+
+inline constexpr Icon Weather = weather().data;
+
 constexpr const uint8_t* get(const UIIcon icon) {
   switch (icon) {
     case UIIcon::Transfer:
@@ -315,6 +334,8 @@ constexpr const uint8_t* get(const UIIcon icon) {
       return Calculator.data();
     case UIIcon::Woodfish:
       return Woodfish.data();
+    case UIIcon::Weather:
+      return Weather.data();
     default:
       return nullptr;
   }
