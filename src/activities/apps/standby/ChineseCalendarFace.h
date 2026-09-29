@@ -48,4 +48,15 @@ class ChineseCalendarFace final : public StandbyFace {
   // false if the resulting date is outside 1900-2100 or system time isn't
   // available; callers should restore `dayOffset_` to a known-good value.
   bool refreshCachedDay();
+
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // On-board SHTC3 ambient reading, shown compactly in the page footer.
+  // Present only on the Waveshare 3.97 (the sole board with an SHTC3), so the
+  // shared X3/X4 calendar image stays byte-for-byte unchanged.
+  uint32_t lastEnvReadMs_ = 0;
+  bool haveEnv_ = false;
+  float tempC_ = 0.0f;
+  float humidityPct_ = 0.0f;
+  void refreshEnv();
+#endif
 };

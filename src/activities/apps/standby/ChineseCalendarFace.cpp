@@ -15,6 +15,10 @@
 #include "fontIds.h"
 #include "util/TimeUtils.h"
 
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+#include <HalTempHumidity.h>
+#endif
+
 // CN font-coverage rule (drives every fontId choice in this file):
 //
 //   8 / 10 / 12 pt  → CN bitmap built from cn_common_chars.txt (~3500 chars).
@@ -323,6 +327,10 @@ void ChineseCalendarFace::onEnter() {
 
   dayOffset_ = 0;
   refreshCachedDay();
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  HalTempHumidity::begin();
+  refreshEnv();
+#endif
 }
 
 void ChineseCalendarFace::onExit() {
@@ -354,6 +362,19 @@ bool ChineseCalendarFace::refreshCachedDay() {
   return true;
 }
 
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+void ChineseCalendarFace::refreshEnv() {
+  float t = 0.0f;
+  float rh = 0.0f;
+  if (HalTempHumidity::read(t, rh)) {
+    tempC_ = t;
+    humidityPct_ = rh;
+    haveEnv_ = true;
+  }
+  lastEnvReadMs_ = millis();
+}
+#endif
+
 void ChineseCalendarFace::onPagePrev() {
   // Up → previous day.
   const int32_t prev = dayOffset_ - 1;
@@ -379,6 +400,13 @@ void ChineseCalendarFace::onPageNext() {
 }
 
 StandbyFace::TickResult ChineseCalendarFace::tick() {
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // Keep the footer temperature/humidity fresh once a minute.
+  if (static_cast<int32_t>(millis() - lastEnvReadMs_) >= 60000) {
+    refreshEnv();
+    return TickResult::Redraw;
+  }
+#endif
   // If user is parked on today (offset 0) and the wall clock has crossed
   // midnight, recompute. Otherwise stay put.
   if (dayOffset_ != 0) return TickResult::None;
@@ -393,9 +421,14 @@ StandbyFace::TickResult ChineseCalendarFace::tick() {
 StrId ChineseCalendarFace::titleId() const { return StrId::STR_FACE_CHINESE_CALENDAR; }
 
 uint32_t ChineseCalendarFace::secondsUntilNextWake() const {
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // The footer temperature/humidity re-reads once a minute on this board.
+  return 60u;
+#else
   // No time-dependent UI inside the page (we only repaint at day crossover).
   // StandbyActivity bounds this interval so USB state is still polled regularly.
   return 3600u;
+#endif
 }
 
 void ChineseCalendarFace::render(GfxRenderer& renderer, const Rect& viewport) {
@@ -406,4 +439,16 @@ void ChineseCalendarFace::render(GfxRenderer& renderer, const Rect& viewport) {
     if (!refreshCachedDay()) return;
   }
   drawAlmanacPage(renderer, viewport, cachedDay_, *heroStyle_, *heroSeeds_);
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // Compact ambient reading on the footer's right, mirroring the left 日柱/冲
+  // line. Same SMALL font and baseline so it reads as part of the footer.
+  if (haveEnv_) {
+    char env[64];
+    std::snprintf(env, sizeof(env), "%s %.1f°C  %s %d%%", tr(STR_ENV_TEMPERATURE), tempC_,
+                  tr(STR_ENV_HUMIDITY), static_cast<int>(humidityPct_ + 0.5f));
+    const int envW = renderer.getTextWidth(SMALL_FONT_ID, env);
+    const int envX = viewport.x + viewport.width - 24 - envW;
+    renderer.drawText(SMALL_FONT_ID, envX, viewport.y + viewport.height - 45, env, /*black=*/true);
+  }
+#endif
 }
