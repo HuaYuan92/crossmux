@@ -57,12 +57,16 @@ void BootActivity::renderSplash() {
   renderer.fillRect((pageWidth - titleW) / 2 - 8, titleY - 4, titleW + 16, titleH + 8, /*state=*/false);
   renderer.drawCenteredText(UI_10_FONT_ID, titleY, welcome, true, EpdFontFamily::BOLD);
 
-  // Firmware version at the bottom, also on a small white plate.
+  // Firmware version at the bottom, also on a small white plate. Hidden on the
+  // Waveshare 3.97 build (user preference); other devices keep it, so the shared
+  // X3/X4 image is unaffected.
+#if !FREEINK_DEVICE_WAVESHARE_EPAPER_397
   const int verY = pageHeight - 30;
   const int verH = renderer.getLineHeight(SMALL_FONT_ID);
   const int verW = renderer.getTextWidth(SMALL_FONT_ID, CROSSPOINT_VERSION);
   renderer.fillRect((pageWidth - verW) / 2 - 6, verY - 2, verW + 12, verH + 4, /*state=*/false);
   renderer.drawCenteredText(SMALL_FONT_ID, verY, CROSSPOINT_VERSION);
+#endif
 #if FREEINK_DEVICE_EEGO_A4
   // A4: the panel is being powered on for the first time here, and a FAST
   // refresh on a freshly powered panel doesn't establish the frame (observed:
