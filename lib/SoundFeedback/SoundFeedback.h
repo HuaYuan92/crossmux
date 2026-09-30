@@ -6,7 +6,7 @@
 
 namespace SoundFeedback {
 
-enum class Cue : uint8_t { None, Move, Activate };
+enum class Cue : uint8_t { None, Move, Activate, Alert };
 enum class Level : uint8_t { Off = 0, Low = 1, Medium = 2, High = 3 };
 
 inline constexpr uint8_t BUTTON_BACK = 0;
@@ -68,6 +68,9 @@ constexpr int16_t scalePcmSample(const int16_t sample, const Level level, const 
 
 bool parsePcmWav(const uint8_t* wav, size_t length, WavPcmView& view);
 void update(uint8_t levelSetting, uint8_t physicalPressedMask);
+// Plays the non-button alert cue (reading-time reminder chime). levelSetting
+// mirrors update()'s CrossPointSettings encoding; Off makes this a no-op.
+void playAlert(uint8_t levelSetting);
 void shutdown();
 
 }  // namespace SoundFeedback

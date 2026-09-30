@@ -18,6 +18,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/AchievementPopupUtils.h"
+#include "util/ReadingReminder.h"
 
 bool XtcReaderActivity::loadBook() {
   auto loadedXtc = makeUniqueNoThrow<Xtc>(bookPath, "/.crosspoint");
@@ -63,6 +64,8 @@ void XtcReaderActivity::openChapterSelection() {
 
 bool XtcReaderActivity::handleFormatInput() {
   READING_STATS.tickActiveSession();
+  ReadingReminder::onTick();
+  ReadingReminder::drawPendingPopup(renderer);
   if (!xtc) {
     return false;
   }

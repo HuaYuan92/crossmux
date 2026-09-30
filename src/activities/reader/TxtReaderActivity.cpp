@@ -30,6 +30,7 @@
 #include "util/AchievementPopupUtils.h"
 #include "util/ReadingBackground.h"
 #include "util/ReadingGuideLine.h"
+#include "util/ReadingReminder.h"
 
 namespace {
 constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
@@ -109,6 +110,8 @@ void TxtReaderActivity::onExit() {
 
 bool TxtReaderActivity::handleFormatInput() {
   READING_STATS.tickActiveSession();
+  ReadingReminder::onTick();
+  ReadingReminder::drawPendingPopup(renderer);
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
       ReaderUtils::isTouchMenuGesture(renderer, mappedInput)) {

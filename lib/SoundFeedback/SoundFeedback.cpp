@@ -74,9 +74,12 @@ extern const uint8_t selectWavStart[] asm("_binary_assets_sounds_select_wav_star
 extern const uint8_t selectWavEnd[] asm("_binary_assets_sounds_select_wav_end");
 extern const uint8_t tapWavStart[] asm("_binary_assets_sounds_tap_wav_start");
 extern const uint8_t tapWavEnd[] asm("_binary_assets_sounds_tap_wav_end");
+extern const uint8_t reminderWavStart[] asm("_binary_assets_sounds_reminder_wav_start");
+extern const uint8_t reminderWavEnd[] asm("_binary_assets_sounds_reminder_wav_end");
 
 WavPcmView selectPcm;
 WavPcmView tapPcm;
+WavPcmView alertPcm;
 const WavPcmView* activePcm = nullptr;
 size_t sourceOffset = 0;
 Level activeLevel = Level::Off;
@@ -96,18 +99,35 @@ constexpr Level decodeLevel(const uint8_t value) { return levelFromSetting((valu
 bool ensureResources() {
   if (resourcesChecked) return resourcesValid;
   resourcesChecked = true;
-  resourcesValid = parsePcmWav(selectWavStart, static_cast<size_t>(selectWavEnd - selectWavStart), selectPcm) &&
-                   parsePcmWav(tapWavStart, static_cast<size_t>(tapWavEnd - tapWavStart), tapPcm) &&
-                   selectPcm.sampleRate == FEEDBACK_SAMPLE_RATE && tapPcm.sampleRate == FEEDBACK_SAMPLE_RATE &&
-                   selectPcm.channels == FEEDBACK_CHANNELS && tapPcm.channels == FEEDBACK_CHANNELS;
+  resourcesValid =
+      parsePcmWav(selectWavStart, static_cast<size_t>(selectWavEnd - selectWavStart), selectPcm) &&
+      parsePcmWav(tapWavStart, static_cast<size_t>(tapWavEnd - tapWavStart), tapPcm) &&
+      parsePcmWav(reminderWavStart, static_cast<size_t>(reminderWavEnd - reminderWavStart), alertPcm) &&
+      selectPcm.sampleRate == FEEDBACK_SAMPLE_RATE && tapPcm.sampleRate == FEEDBACK_SAMPLE_RATE &&
+      alertPcm.sampleRate == FEEDBACK_SAMPLE_RATE && selectPcm.channels == FEEDBACK_CHANNELS &&
+      tapPcm.channels == FEEDBACK_CHANNELS && alertPcm.channels == FEEDBACK_CHANNELS;
   if (!resourcesValid) LOG_ERR("SND", "Invalid embedded feedback WAV");
   return resourcesValid;
+}
+
+const WavPcmView* pcmForCue(const Cue cue) {
+  switch (cue) {
+    case Cue::Move:
+      return &selectPcm;
+    case Cue::Activate:
+      return &tapPcm;
+    case Cue::Alert:
+      return &alertPcm;
+    case Cue::None:
+      break;
+  }
+  return nullptr;
 }
 
 bool seekSource(const size_t position) {
   const uint8_t snapshot = requested.load(std::memory_order_acquire);
   const Cue cue = decodeCue(snapshot);
-  const WavPcmView* pcm = cue == Cue::Move ? &selectPcm : cue == Cue::Activate ? &tapPcm : nullptr;
+  const WavPcmView* pcm = pcmForCue(cue);
   if (!pcm || position > pcm->length) return false;
   activePcm = pcm;
   activeLevel = decodeLevel(snapshot);
@@ -154,6 +174,15 @@ void update(const uint8_t levelSetting, const uint8_t physicalPressedMask) {
   if (level == Level::Off || cue == Cue::None || !ensureResources()) return;
 
   requested.store(encodeRequest(cue, level), std::memory_order_release);
+  const uint8_t volume = volumeForLevel(level, ACTIVE_CALIBRATION);
+  if (HalAudioOutput::restart(volume)) return;
+  HalAudioOutput::playPcm(readSource, seekSource, FEEDBACK_SAMPLE_RATE, FEEDBACK_CHANNELS, volume);
+}
+
+void playAlert(const uint8_t levelSetting) {
+  const Level level = levelFromSetting(levelSetting);
+  if (level == Level::Off || !ensureResources()) return;
+  requested.store(encodeRequest(Cue::Alert, level), std::memory_order_release);
   const uint8_t volume = volumeForLevel(level, ACTIVE_CALIBRATION);
   if (HalAudioOutput::restart(volume)) return;
   HalAudioOutput::playPcm(readSource, seekSource, FEEDBACK_SAMPLE_RATE, FEEDBACK_CHANNELS, volume);

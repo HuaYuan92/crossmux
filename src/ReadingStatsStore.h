@@ -153,6 +153,9 @@ class ReadingStatsStore {
   const ReadingBookStats* findMatchingBookForPath(const std::string& path, const std::string& title = "",
                                                   const std::string& author = "") const;
   const ReadingSessionSnapshot& getLastSessionSnapshot() const { return lastSessionSnapshot; }
+  // Active-time credited so far in the live session (0 when no session is
+  // running); pauses and standby windows are excluded by the heartbeat model.
+  uint64_t getActiveSessionAccumulatedMs() const { return activeSession.active ? activeSession.accumulatedMs : 0; }
 
   const std::vector<ReadingBookStats>& getBooks() const { return books; }
   const std::vector<ReadingDayStats>& getReadingDays() const { return readingDays; }

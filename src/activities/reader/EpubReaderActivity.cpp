@@ -49,6 +49,7 @@
 #include "util/BookmarkFile.h"
 #include "util/ReadingBackground.h"
 #include "util/ReadingGuideLine.h"
+#include "util/ReadingReminder.h"
 #ifdef ENABLE_CHINESE_VERSION
 #include <WeReadStore.h>
 
@@ -599,6 +600,8 @@ void EpubReaderActivity::loop() {
 #endif
 
   READING_STATS.tickActiveSession();
+  ReadingReminder::onTick();
+  ReadingReminder::drawPendingPopup(renderer);
   // Someone else turned the screen while this reader was stacked (the control
   // center's orientation tile). Reflow before the next render, or the page
   // would be drawn with a layout built for the previous frame size.

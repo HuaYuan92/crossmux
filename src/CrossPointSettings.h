@@ -399,6 +399,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 #else
   uint8_t soundFeedbackLevel = SOUND_FEEDBACK_OFF;
 #endif
+  // Reading-time reminder: option index (0 = off, 1 = 5min, 2 = 15min,
+  // 3 = 30min, 4 = 45min, 5 = 60min) plus repeat flag. Listed in Settings only
+  // on audio-capable boards; fields stay layout-stable across targets.
+  uint8_t readingReminderMinutes = 0;
+  uint8_t readingReminderRepeat = 0;
 #if FREEINK_CAP_HAPTIC
   uint8_t hapticFeedbackLevel = HAPTIC_FEEDBACK_MEDIUM;
 #endif

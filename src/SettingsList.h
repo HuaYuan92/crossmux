@@ -304,6 +304,15 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled, "hyphenationEnabled",
                             StrId::STR_CAT_READER)
             .withTextSettings(),
+#if CROSSPOINT_CAP_SOUND_FEEDBACK
+        // Persisted as the option index; minutes live in ReadingReminder's table.
+        SettingInfo::Enum(StrId::STR_READING_REMINDER, &CrossPointSettings::readingReminderMinutes,
+                          {StrId::STR_STATE_OFF, StrId::STR_MIN_5, StrId::STR_MIN_15, StrId::STR_MIN_30,
+                           StrId::STR_MIN_45, StrId::STR_MIN_60},
+                          "readingReminderMinutes", StrId::STR_CAT_READER),
+        SettingInfo::Toggle(StrId::STR_READING_REMINDER_REPEAT, &CrossPointSettings::readingReminderRepeat,
+                            "readingReminderRepeat", StrId::STR_CAT_READER),
+#endif
         SettingInfo::Enum(
             StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
             {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_ORIENTATION_INVERTED, StrId::STR_LANDSCAPE_CCW},
