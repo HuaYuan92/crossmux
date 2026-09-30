@@ -55,6 +55,23 @@ extern const char* const kLunarDayNames[30];    // "初一", "初二", ..., "三
 extern const char* const kYiPool[12][4];        // 12 sets × 4 yi items (by day branch)
 extern const char* const kJiPool[12][4];        // 12 sets × 4 ji items (by day branch)
 
+// ---- Lightweight per-date helpers (for month-grid rendering) ----------
+// Cheaper than computeAlmanac: no ganzhi / yi-ji. Safe defaults out of range.
+uint8_t weekdayOf(int year, int month, int day);         // 0=Sun .. 6=Sat
+int daysInMonth(int year, int month);                     // 28..31, 0 if invalid
+const char* lunarDayLabel(int year, int month, int day);  // "初一".."三十", "" if out of range
+int solarTermOnDate(int year, int month, int day);        // term idx 0..23 if this exact
+                                                          // date is that term's day, else -1
+
+struct LunarDate {
+  int year;    // lunar year (1900..2100)
+  int month;   // 1..12
+  int day;     // 1..30
+  bool leap;   // month is the leap month
+};
+// Numeric lunar date for a Gregorian date; false if out of range.
+bool lunarOfDate(int year, int month, int day, LunarDate& out);
+
 }  // namespace chinese_almanac
 
 // Compute the almanac for the given Beijing-local time. Caller passes a

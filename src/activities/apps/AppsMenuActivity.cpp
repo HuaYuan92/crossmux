@@ -52,6 +52,7 @@ constexpr AppEntry kAppEntries[] = {
     {AppId::Standby, StrId::STR_STANDBY_TITLE, UIIcon::Standby, &ActivityManager::goToStandby},
 #if FREEINK_DEVICE_WAVESHARE_EPAPER_397
     {AppId::Weather, StrId::STR_FACE_WEATHER, UIIcon::Weather, &ActivityManager::goToWeather},
+    {AppId::Calendar, StrId::STR_CALENDAR_TITLE, UIIcon::Calendar, &ActivityManager::goToCalendar},
 #endif
 };
 

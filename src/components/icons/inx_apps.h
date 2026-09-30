@@ -290,6 +290,22 @@ constexpr Bitmap weather() {
 
 inline constexpr Icon Weather = weather().data;
 
+// A month-calendar glyph: framed page, header bar with two binding rings, and a
+// dot grid for the days. Line-art style matching the other app thumbnails.
+constexpr Bitmap calendar() {
+  Bitmap icon;
+  icon.rect(5, 7, 22, 22);   // body
+  icon.line(5, 12, 27, 12);  // header separator
+  icon.line(11, 4, 11, 9);   // left ring
+  icon.line(21, 4, 21, 9);   // right ring
+  for (int y = 16; y <= 24; y += 4) {
+    for (int x = 9; x <= 23; x += 5) icon.filledRect(x, y, 2, 2);
+  }
+  return icon;
+}
+
+inline constexpr Icon Calendar = calendar().data;
+
 constexpr const uint8_t* get(const UIIcon icon) {
   switch (icon) {
     case UIIcon::Transfer:
@@ -336,6 +352,8 @@ constexpr const uint8_t* get(const UIIcon icon) {
       return Woodfish.data();
     case UIIcon::Weather:
       return Weather.data();
+    case UIIcon::Calendar:
+      return Calendar.data();
     default:
       return nullptr;
   }

@@ -177,7 +177,8 @@ enum UIIcon {
   Calculator,
   Woodfish,
   Weather,
-  Usb
+  Usb,
+  Calendar
 };
 
 // Default theme implementation (Classic Theme)

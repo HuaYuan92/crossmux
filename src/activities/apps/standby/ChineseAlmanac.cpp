@@ -679,6 +679,55 @@ bool computeAlmanac(const struct tm& t, AlmanacDay& out) {
   return true;
 }
 
+// =====================================================================
+//  Lightweight per-date helpers (month-grid rendering)
+//  These reuse the same lunar/solar-term tables as computeAlmanac but skip
+//  the ganzhi and yi/ji work, so a 42-cell month grid stays cheap.
+// =====================================================================
+
+namespace chinese_almanac {
+
+uint8_t weekdayOf(int year, int month, int day) {
+  return weekdayFromAbsDay(gregorianToAbsDay(year, month, day));
+}
+
+int daysInMonth(int year, int month) {
+  if (month < 1 || month > 12) return 0;
+  return daysInGregMonth(year, month);
+}
+
+const char* lunarDayLabel(int year, int month, int day) {
+  if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return "";
+  const int32_t absDay = gregorianToAbsDay(year, month, day);
+  if (absDay < 0) return "";
+  const LunarYMD l = lunarFromAbsDay(absDay);
+  if (l.day < 1 || l.day > 30) return "";
+  return kLunarDayNames[l.day - 1];
+}
+
+int solarTermOnDate(int year, int month, int day) {
+  if (year < 1900 || year > 2100) return -1;
+  const int32_t absDay = gregorianToAbsDay(year, month, day);
+  for (int i = 0; i < 24; ++i) {
+    if (termAbsDay(year, i) == absDay) return i;
+  }
+  return -1;
+}
+
+bool lunarOfDate(int year, int month, int day, LunarDate& out) {
+  if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const int32_t absDay = gregorianToAbsDay(year, month, day);
+  if (absDay < 0) return false;
+  const LunarYMD l = lunarFromAbsDay(absDay);
+  out.year = l.year;
+  out.month = l.month;
+  out.day = l.day;
+  out.leap = l.leap;
+  return true;
+}
+
+}  // namespace chinese_almanac
+
 #else  // !ENABLE_CHINESE_VERSION
 
 // Non-CN builds: stub out the API so non-CN TUs that conditionally include
@@ -687,5 +736,16 @@ bool computeAlmanac(const struct tm&, AlmanacDay& out) {
   (void)out;
   return false;
 }
+
+namespace chinese_almanac {
+uint8_t weekdayOf(int, int, int) { return 0; }
+int daysInMonth(int, int) { return 0; }
+const char* lunarDayLabel(int, int, int) { return ""; }
+int solarTermOnDate(int, int, int) { return -1; }
+bool lunarOfDate(int, int, int, LunarDate& out) {
+  out = LunarDate{};
+  return false;
+}
+}  // namespace chinese_almanac
 
 #endif  // ENABLE_CHINESE_VERSION
