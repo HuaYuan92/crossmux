@@ -29,6 +29,7 @@
 #endif
 #if FREEINK_DEVICE_WAVESHARE_EPAPER_397
 #include "WeatherFace.h"
+#include "MonthCalendarFace.h"
 #endif
 #include "SloppyClockFace.h"
 #include "StandbyTime.h"
@@ -64,6 +65,8 @@ constexpr FaceEntry kFaces[] = {
 #if FREEINK_DEVICE_WAVESHARE_EPAPER_397
     {[]() -> std::unique_ptr<StandbyFace> { return makeUniqueNoThrow<WeatherFace>(); },
      [](int sw, int sh) { return sh > sw; }},  // portrait only; reads the Weather app's SD cache
+    {[]() -> std::unique_ptr<StandbyFace> { return makeUniqueNoThrow<MonthCalendarFace>(); },
+     [](int sw, int sh) { return sh > sw; }},  // portrait only; reads the Calendar app's holiday SD cache
 #endif
 };
 constexpr uint8_t kFaceCount = static_cast<uint8_t>(sizeof(kFaces) / sizeof(kFaces[0]));
