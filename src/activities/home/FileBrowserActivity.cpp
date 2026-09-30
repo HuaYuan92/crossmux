@@ -22,6 +22,7 @@
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
 #include "util/FileEditUtils.h"
+#include "util/ImageThumbLoader.h"
 
 namespace fui = freeink::ui;
 
@@ -117,6 +118,12 @@ void FileBrowserActivity::loadFiles() {
 // ListItem) per file each time it's called.
 void FileBrowserActivity::rebuildRowItems() {
   rowsUseFileIcons = UITheme::getInstance().getTheme().showsFileIcons();
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // New row set (directory reload or theme flip): previews are re-fetched for
+  // the next visible window, and rename/move bookkeeping keeps stale keys out.
+  ImageThumbLoader::clearVisibleCache();
+  thumbSpanLo = thumbSpanHi = -1;
+#endif
   rowNames.resize(files.size());
   rowExtensions.resize(files.size());
   rowItems.clear();
@@ -167,6 +174,17 @@ bool FileBrowserActivity::usesIconLayout() const {
 
 void FileBrowserActivity::drawIconGrid(UiScreen& screen, const fui::Rect rect) const {
   const int start = InxGridGeometry::pageStart(nav.selected, files.size());
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // Refetch previews when this frame's page leaves the cached span: clear
+  // BEFORE filling so every BitmapRef handed out during this frame stays
+  // valid for its whole draw pass.
+  const int pageLast = start + InxGridGeometry::itemsPerPage - 1;
+  if (start > thumbSpanHi || pageLast < thumbSpanLo || thumbSpanLo < 0) {
+    ImageThumbLoader::clearVisibleCache();
+    thumbSpanLo = start;
+    thumbSpanHi = pageLast;
+  }
+#endif
   const int cellWidth = rect.width / InxGridGeometry::columns;
   const int cellHeight = rect.height / InxGridGeometry::rows;
   constexpr int iconSize = 72;
@@ -180,13 +198,39 @@ void FileBrowserActivity::drawIconGrid(UiScreen& screen, const fui::Rect rect) c
     const bool selected = showSelection && index == nav.selected;
     if (selected) renderer.fillRect(cell.x, cell.y, cell.width, cell.height, true);
     const UIIcon type = UITheme::getFileIcon(files[index]);
-    const uint8_t* icon = type == UIIcon::Folder ? FolderLarge : (type == UIIcon::Image ? ImageLarge : BookLarge);
     const int iconX = cell.x + (cell.width - iconSize) / 2;
     const int iconY = cell.y + std::max(4, (cell.height - iconSize - lineHeight - 6) / 2);
-    if (selected)
-      renderer.drawIconInverted(icon, iconX, iconY, iconSize);
-    else
-      renderer.drawIcon(icon, iconX, iconY, iconSize);
+    bool previewDrawn = false;
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+    if (type == UIIcon::Image) {
+      // basepath can carry a trailing '/' after activation bookkeeping; the
+      // cleaned join keeps preview keys stable across that mutation.
+      if (const auto* thumb = ImageThumbLoader::get(joinPath(cleanEntryName(basepath), files[index]))) {
+        fui::BitmapRef ref;
+        ref.data = thumb->bits.data();
+        ref.width = thumb->width;
+        ref.height = thumb->height;
+        ref.format = fui::BitmapFormat::BW1;
+        ref.progmem = false;
+        const fui::Rect slot{static_cast<int16_t>(iconX), static_cast<int16_t>(iconY),
+                             static_cast<int16_t>(iconSize), static_cast<int16_t>(iconSize)};
+        if (selected) {
+          // The selected cell is filled black: lay a white mat so the photo
+          // stays positive instead of inverting into a negative.
+          screen.target().fill(slot, fui::Paint::solid(fui::Color::White));
+        }
+        screen.target().bitmap(slot, ref, fui::BitmapMode::Contain);
+        previewDrawn = true;
+      }
+    }
+#endif
+    if (!previewDrawn) {
+      const uint8_t* icon = type == UIIcon::Folder ? FolderLarge : (type == UIIcon::Image ? ImageLarge : BookLarge);
+      if (selected)
+        renderer.drawIconInverted(icon, iconX, iconY, iconSize);
+      else
+        renderer.drawIcon(icon, iconX, iconY, iconSize);
+    }
     const char* label =
         index < static_cast<int>(gridLabels.size()) ? gridLabels[index].c_str() : rowNames[index].c_str();
     const int labelX = cell.x + (cell.width - renderer.getTextWidth(UI_10_FONT_ID, label)) / 2;
@@ -228,6 +272,10 @@ void FileBrowserActivity::onEnter() {
 
 void FileBrowserActivity::onExit() {
   Activity::onExit();
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  ImageThumbLoader::clearVisibleCache();
+  thumbSpanLo = thumbSpanHi = -1;
+#endif
   files.clear();
   rowNames.clear();
   rowExtensions.clear();
@@ -517,6 +565,9 @@ bool FileBrowserActivity::relocateDirectoryData(const std::string& oldPath, cons
 
 bool FileBrowserActivity::relocatePathData(const std::string& oldPath, const std::string& newPath,
                                            const bool isDirectory) {
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  ImageThumbLoader::onPathChanged(oldPath);
+#endif
   if (isDirectory) return relocateDirectoryData(oldPath, newPath);
   return relocateBookArtifacts(oldPath, newPath) && relocateBookReferences(oldPath, newPath);
 }
@@ -774,12 +825,46 @@ void FileBrowserActivity::buildScreen(UiScreen& screen) {
   }
 
   fui::ListProps props;
+#if FREEINK_DEVICE_WAVESHARE_EPAPER_397
+  // Lazy-fill previews for the window the previous pass laid out (a cheap and
+  // close estimate of this one); rows outside it keep the generic icon until
+  // the viewport comes back over them.
+  {
+    const int first = std::max(0, nav.top);
+    const int last = std::min(listCount() - 1, nav.top + std::max(1, nav.pageRows()));
+    if (first > thumbSpanHi || last < thumbSpanLo || thumbSpanLo < 0) {
+      ImageThumbLoader::clearVisibleCache();
+      thumbSpanLo = first;
+      thumbSpanHi = last;
+    } else {
+      thumbSpanLo = std::min(thumbSpanLo, first);
+      thumbSpanHi = std::max(thumbSpanHi, last);
+    }
+    for (int i = first; i <= last; ++i) {
+      if (i < 0 || i >= static_cast<int>(files.size())) continue;
+      if (files[i] == MOVE_HERE_ENTRY || files[i].back() == '/') continue;
+      if (UITheme::getFileIcon(files[i]) != UIIcon::Image) continue;
+      if (const auto* thumb = ImageThumbLoader::get(joinPath(cleanEntryName(basepath), files[i]))) {
+        fui::BitmapRef ref;
+        ref.data = thumb->bits.data();
+        ref.width = thumb->width;
+        ref.height = thumb->height;
+        ref.format = fui::BitmapFormat::BW1;
+        ref.progmem = false;
+        rowItems[i].icon = ref;
+      }
+    }
+  }
+#endif
   props.items = rowItems.data();
   props.count = static_cast<uint16_t>(rowItems.size());
   props.action = ACTION_ROW;
   // Tap opens/navigates; long-press prompts delete (physical buttons stay in loop()).
   props.inputMask = fui::InputTouch | fui::InputLongPress;
   props.valueInset = 8;  // air between the extension and the row edge
+  // Same slot the 24 px type icons already render at; it also caps the
+  // 96 px preview bitmaps swapped into image rows above.
+  props.iconSize = 24;
   // Match the pre-FreeInkUI file-list size while keeping two-line wrapping for
   // long names.
   fui::TextStyle label = screen.theme().bodyText;

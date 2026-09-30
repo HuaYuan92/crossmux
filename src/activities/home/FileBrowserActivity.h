@@ -61,6 +61,13 @@ class FileBrowserActivity final : public UiListActivity {
   // invalidates the cached rows on return instead of rendering stale ones.
   bool rowsUseFileIcons = false;
 
+  // 3.97 image previews: the row-index window currently backed by the
+  // ImageThumbLoader cache (-1 = empty). The cache is cleared only before a
+  // frame refills a disjoint window, so BitmapRefs handed to draw targets
+  // never dangle mid-frame.
+  mutable int thumbSpanLo = -1;
+  mutable int thumbSpanHi = -1;
+
   void rebuildRowItems();
   bool usesIconLayout() const;
   void drawIconGrid(UiScreen& screen, freeink::ui::Rect rect) const;
