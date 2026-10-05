@@ -8,7 +8,9 @@
 
 #include "BleInput.h"
 #include "MappedInputManager.h"
+#include "SdCardFontSystem.h"
 #include "SilentRestart.h"
+#include "activities/RenderLock.h"
 #include "components/UITheme.h"
 
 namespace fui = freeink::ui;
@@ -18,6 +20,18 @@ void UsbDriveActivity::onEnter() {
   Activity::onEnter();
   resetUi();
   app.setScreen(&UsbDriveActivity::driveScreen, this);
+
+  // The raw SD card is about to leave the firmware's filesystem mount, which
+  // breaks the SD-card font's on-demand glyph reads (the coverage index stays
+  // resident in RAM, so resolveTextFontId still routes CJK/non-ASCII text to the
+  // SD face, but the bitmap read then fails and renders missing-glyph squares).
+  // Unload the resident SD font before the first paint so every screen — safety
+  // message included — renders through the built-in UI/CJK fallbacks. The exit
+  // path is a full reboot, so the saved font selection is restored on next boot.
+  {
+    RenderLock lock;
+    sdFontSystem.releaseLoadedFont(renderer);
+  }
 
   // Show the safety instructions before giving the raw SD card to the USB host.
   requestUpdateAndWait();
