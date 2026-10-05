@@ -59,6 +59,16 @@
 #include <SoundFeedback.h>
 #endif
 
+#if FREEINK_CAP_MIC && FREEINK_DEVICE_WAVESHARE_EPAPER_397
+// M2-A Opus spike harness (temporary): validates vendored libopus encode/decode
+// against a live ES8311 capture on the 3.97, ahead of any xiaozhi client work.
+#include <HalAudioInput.h>
+#include <HalAudioOutput.h>
+#include <opus.h>
+#include <esp_heap_caps.h>
+#include <esp_timer.h>
+#endif
+
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
 ActivityManager activityManager(renderer, mappedInputManager);
@@ -114,6 +124,207 @@ void updateBluetoothLifecycle() {
   }
 #endif
 }
+
+#if FREEINK_CAP_MIC && FREEINK_DEVICE_WAVESHARE_EPAPER_397
+// ---- Temporary M2-A Opus bring-up harness -------------------------------
+// Serial "CMD:OPUSTEST": records a short mono clip from the ES8311 ADC, encodes
+// it with the vendored fixed-point libopus (16 kHz, mono, 60 ms frames -- the
+// xiaozhi.me audio profile), decodes it straight back, and plays the result. It
+// answers the one spike question that blocks M2-B: does Opus run within the 3.97
+// RAM/Flash/CPU budget and does the round-trip stay intelligible. The whole
+// flow runs on a dedicated large-stack task because the library is built with
+// USE_ALLOCA (Opus temporaries come off the task stack).
+constexpr uint32_t kOpusSampleRate = 16000;
+constexpr int kOpusChannels = 1;
+constexpr int kOpusFrameSamples = kOpusSampleRate * 60 / 1000;  // 960 (60 ms)
+constexpr uint32_t kOpusTestSeconds = 6;
+constexpr int kOpusMaxPacket = 1500;
+constexpr uint8_t kOpusTestVolume = 200;
+
+struct OpusPlayback {
+  const int16_t* data = nullptr;
+  size_t samples = 0;
+  size_t cursor = 0;
+};
+static OpusPlayback g_opusPlayback;
+
+int opusPlaybackRead(uint8_t* dst, size_t length) {
+  const size_t remaining = (g_opusPlayback.samples - g_opusPlayback.cursor) * sizeof(int16_t);
+  if (remaining == 0) return 0;
+  const size_t n = length < remaining ? length : remaining;
+  const auto* src = reinterpret_cast<const uint8_t*>(g_opusPlayback.data) + g_opusPlayback.cursor * sizeof(int16_t);
+  memcpy(dst, src, n);
+  g_opusPlayback.cursor += n / sizeof(int16_t);
+  return static_cast<int>(n);
+}
+
+bool opusPlaybackSeek(size_t position) {
+  g_opusPlayback.cursor = position / sizeof(int16_t);
+  return true;
+}
+
+void opusTestTask(void*) {
+  const size_t totalSamples = kOpusSampleRate * kOpusTestSeconds;
+  const size_t maxFrames = totalSamples / kOpusFrameSamples;
+  const size_t internalBefore = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+
+  int16_t* pcm = static_cast<int16_t*>(
+      heap_caps_malloc(totalSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  auto* stream = static_cast<uint8_t*>(
+      heap_caps_malloc(maxFrames * kOpusMaxPacket, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  auto* frameSizes = static_cast<uint16_t*>(heap_caps_malloc(maxFrames * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!pcm || !stream || !frameSizes) {
+    LOG_ERR("OPUS", "alloc failed pcm=%p stream=%p sizes=%p", (void*)pcm, (void*)stream, (void*)frameSizes);
+    free(pcm); free(stream); free(frameSizes);
+    vTaskDelete(NULL);
+    return;
+  }
+
+  // 1) Capture from the ES8311 ADC (begin releases the shared I2S output path).
+  size_t filled = 0;
+  if (HalAudioInput::begin(kOpusSampleRate)) {
+    delay(1000);  // pre-roll: give the speaker time to start and let the begin
+                  // transient flush before the timed capture window opens.
+    while (filled < totalSamples) {
+      const int got = HalAudioInput::read(pcm + filled, totalSamples - filled, 100);
+      if (got < 0) break;
+      if (got == 0) continue;
+      filled += static_cast<size_t>(got);
+    }
+    HalAudioInput::end();
+  } else {
+    LOG_ERR("OPUS", "mic begin failed");
+  }
+  const size_t frames = filled / kOpusFrameSamples;
+  // Split the level stats so a single start-of-capture transient pop cannot be
+  // mistaken for sustained clipping: report the peak in the first 500 ms
+  // separately from the body, and characterise the body's dynamic range.
+  uint32_t peak = 0;
+  const size_t headSamples = (kOpusSampleRate / 2 < filled) ? kOpusSampleRate / 2 : filled;  // first 500 ms
+  uint32_t headPeak = 0;
+  uint32_t bodyPeak = 0;
+  size_t bodyN = 0, over8k = 0, over16k = 0, over24k = 0;
+  for (size_t i = 0; i < filled; ++i) {
+    const int16_t v = pcm[i];
+    const uint32_t a = v < 0 ? static_cast<uint32_t>(-v) : static_cast<uint32_t>(v);
+    if (a > peak) peak = a;
+    if (i < headSamples) {
+      if (a > headPeak) headPeak = a;
+    } else {
+      ++bodyN;
+      if (a > bodyPeak) bodyPeak = a;
+      if (a > 8000) ++over8k;
+      if (a > 16000) ++over16k;
+      if (a > 24000) ++over24k;
+    }
+  }
+  LOG_INF("OPUS", "captured %u samples (%u frames), peak=%u", static_cast<unsigned>(filled),
+          static_cast<unsigned>(frames), static_cast<unsigned>(peak));
+  LOG_INF("OPUS", "level: head(500ms)Peak=%u bodyPeak=%u bodyN=%u body>8k=%u >16k=%u >24k=%u",
+          static_cast<unsigned>(headPeak), static_cast<unsigned>(bodyPeak), static_cast<unsigned>(bodyN),
+          static_cast<unsigned>(over8k), static_cast<unsigned>(over16k), static_cast<unsigned>(over24k));
+
+  // 2) Encode PCM -> Opus frames.
+  int err = OPUS_OK;
+  OpusEncoder* enc = opus_encoder_create(kOpusSampleRate, kOpusChannels, OPUS_APPLICATION_VOIP, &err);
+  const size_t internalAfterEnc = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  if (!enc) {
+    LOG_ERR("OPUS", "encoder_create err=%d internalFree=%u", err, static_cast<unsigned>(internalAfterEnc));
+    free(pcm); free(stream); free(frameSizes);
+    vTaskDelete(NULL);
+    return;
+  }
+  opus_encoder_ctl(enc, OPUS_SET_BITRATE(24000));
+  opus_encoder_ctl(enc, OPUS_SET_COMPLEXITY(5));
+  // Drop the first ~480 ms of frames: the start-of-capture transient pop is always
+  // present and M2 will gate it client-side, so keep it out of the encoder.
+  const size_t skipFrames = (kOpusSampleRate / 2) / kOpusFrameSamples;  // 8 frames
+  size_t streamBytes = 0;
+  size_t encodedFrames = 0;
+  int64_t encUs = 0;
+  uint32_t encFreqMhz = 0;
+  {
+    // Force full CPU (240 MHz) for a true encode-cost reading. The idle loop has
+    // already downclocked to 80 MHz, which inflates the per-frame time ~3x, and
+    // the task self-terminates via vTaskDelete(NULL) so the RAII lock must be
+    // released by this scope's closing brace, before any early return.
+    HalPowerManager::Lock fullSpeed;
+    encFreqMhz = static_cast<uint32_t>(getCpuFrequencyMhz());
+    const int64_t encStart = esp_timer_get_time();
+    for (size_t f = skipFrames; f < frames; ++f) {
+      const int n = opus_encode(enc, pcm + f * kOpusFrameSamples, kOpusFrameSamples, stream + streamBytes, kOpusMaxPacket);
+      if (n < 0) {
+        LOG_ERR("OPUS", "encode err @frame %u: %d", static_cast<unsigned>(f), n);
+        break;
+      }
+      frameSizes[encodedFrames] = static_cast<uint16_t>(n);
+      streamBytes += static_cast<size_t>(n);
+      ++encodedFrames;
+    }
+    encUs = esp_timer_get_time() - encStart;
+  }
+  const size_t encState = opus_encoder_get_size(kOpusChannels);
+  LOG_INF("OPUS", "encode @%u MHz: %u frames, %u bytes, %lld us total (%lld us/frame), encState=%u", encFreqMhz,
+          static_cast<unsigned>(encodedFrames), static_cast<unsigned>(streamBytes), static_cast<long long>(encUs),
+          encodedFrames ? static_cast<long long>(encUs / encodedFrames) : 0, static_cast<unsigned>(encState));
+  opus_encoder_destroy(enc);
+
+  // 3) Decode Opus frames -> PCM, in place over the capture buffer.
+  OpusDecoder* dec = opus_decoder_create(kOpusSampleRate, kOpusChannels, &err);
+  const size_t internalAfterDec = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  if (!dec) {
+    LOG_ERR("OPUS", "decoder_create err=%d", err);
+    free(pcm); free(stream); free(frameSizes);
+    vTaskDelete(NULL);
+    return;
+  }
+  const int64_t decStart = esp_timer_get_time();
+  size_t decodedSamples = 0;
+  size_t streamPos = 0;
+  for (size_t f = 0; f < encodedFrames; ++f) {
+    const int n = opus_decode(dec, stream + streamPos, frameSizes[f], pcm + decodedSamples, kOpusFrameSamples, 0);
+    if (n < 0) {
+      LOG_ERR("OPUS", "decode err @frame %u: %d", static_cast<unsigned>(f), n);
+      break;
+    }
+    streamPos += frameSizes[f];
+    decodedSamples += static_cast<size_t>(n);
+  }
+  const int64_t decUs = esp_timer_get_time() - decStart;
+  const size_t decState = opus_decoder_get_size(kOpusChannels);
+  LOG_INF("OPUS", "decode: %u samples, %lld us total (%lld us/frame), decState=%u",
+          static_cast<unsigned>(decodedSamples), static_cast<long long>(decUs),
+          encodedFrames ? static_cast<long long>(decUs / encodedFrames) : 0, static_cast<unsigned>(decState));
+  LOG_INF("OPUS", "heap internal free: before=%u afterEncCreate=%u afterDecCreate=%u (bytes)",
+          static_cast<unsigned>(internalBefore), static_cast<unsigned>(internalAfterEnc),
+          static_cast<unsigned>(internalAfterDec));
+  opus_decoder_destroy(dec);
+
+  LOG_INF("OPUS", "first16: %d %d %d %d %d %d %d %d", pcm[0], pcm[1], pcm[2], pcm[3], pcm[4], pcm[5], pcm[6],
+          pcm[7]);
+
+  // 4) Play the decoded clip back through the output path (rebuilds TX).
+  g_opusPlayback = OpusPlayback{pcm, decodedSamples, 0};
+  const bool playOk = HalAudioOutput::playPcm(opusPlaybackRead, opusPlaybackSeek, kOpusSampleRate, kOpusChannels,
+                                              kOpusTestVolume);
+  LOG_INF("OPUS", "playback %s", playOk ? "started" : "FAILED");
+  if (playOk) delay(kOpusTestSeconds * 1000 + 1500);
+
+  g_opusPlayback = OpusPlayback{};
+  free(pcm); free(stream); free(frameSizes);
+  LOG_INF("OPUS", "done, internal free now=%u", static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
+  vTaskDelete(NULL);
+}
+
+void runOpusBringupTest() {
+  // Opus's USE_ALLOCA build moves CELT/SILK temporaries onto the task stack; a
+  // 60 ms SILK frame peaks well past the loop task's 8 KB. Give the one-shot
+  // task a generous 48 KB stack so encode/decode never trips the stack canary.
+  if (xTaskCreatePinnedToCore(opusTestTask, "opustest", 49152, nullptr, 6, nullptr, 1) != pdPASS) {
+    LOG_ERR("OPUS", "failed to spawn opustest task");
+  }
+}
+#endif
 }  // namespace
 
 // A wake hold must never become an in-app power-button action.  Boot may continue
@@ -859,6 +1070,11 @@ void loop() {
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
       }
+#if FREEINK_CAP_MIC && FREEINK_DEVICE_WAVESHARE_EPAPER_397
+      else if (cmd == "OPUSTEST") {
+        runOpusBringupTest();
+      }
+#endif
     }
   }
 

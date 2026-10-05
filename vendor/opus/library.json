@@ -1,0 +1,38 @@
+{
+  "name": "opus",
+  "version": "1.0.5",
+  "description": "Vendored libopus (fixed-point, generic C) for the Waveshare 3.97 mic-capture spike. Source subset (celt + silk + silk/fixed + src) mirroring 78/esp-opus's proven ESP-IDF 5.x component file list; dnn/tests/float/arch trees removed.",
+  "license": "BSD-3-Clause",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "srcDir": ".",
+    "srcFilter": [
+      "+<celt/*.c>",
+      "+<celt/*.cpp>",
+      "+<silk/*.c>",
+      "+<silk/fixed/*.c>",
+      "+<src/*.c>"
+    ],
+    "includeDir": "include",
+    "flags": [
+      "-I.",
+      "-Iinclude",
+      "-Icelt",
+      "-Isilk",
+      "-Isilk/fixed",
+      "-Isrc",
+      "-DFIXED_POINT=1",
+      "-DDISABLE_FLOAT_API",
+      "-DUSE_ALLOCA",
+      "-DOPUS_BUILD",
+      "-DHAVE_ALLOCA_H",
+      "-DHAVE_LRINT",
+      "-DHAVE_LRINTF",
+      "-DHAVE_MEMORY_H",
+      "-Wno-maybe-uninitialized",
+      "-Wno-unused-variable",
+      "-Wno-unused-function"
+    ]
+  }
+}
